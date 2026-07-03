@@ -1,6 +1,10 @@
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import numpy as np
+import numpy.random as random
+
+random_seed = 42
+np.random.seed(random_seed)
 
 
 class Robot():
@@ -31,7 +35,7 @@ class Controller():
 
 
 class Simulations():
-    def __init__(self, dt, xtarget, ytarget, linearPID, angularPID, robot):
+    def __init__(self, dt, xtarget, ytarget, linearPID, angularPID, robot, noise):
         self.dt = dt
         self.xtarget = xtarget
         self.ytarget = ytarget
@@ -43,16 +47,21 @@ class Simulations():
         self.threshold = 0.1
         self.step = 0
         self.max_steps = 1000
+        self.noise = noise
 
     def run(self):
 
         while True:
             if self.step >= self.max_steps:
                 break
-            linear_error = np.sqrt((self.xtarget - self.robot.x)**2 + (self.ytarget - self.robot.y)**2)
+
+            noisyx = self.robot.x + random.normal(0, self.noise)
+            noisyy = self.robot.y + random.normal(0, self.noise)
+
+            linear_error = np.sqrt((self.xtarget - noisyx)**2 + (self.ytarget - noisyy)**2)
             if linear_error < self.threshold:
                 break
-            angular_error = np.arctan2((self.ytarget - self.robot.y), (self.xtarget - self.robot.x)) - self.robot.theta
+            angular_error = np.arctan2((self.ytarget - noisyy), (self.xtarget - noisyx)) - self.robot.theta
             angular_error = (angular_error + np.pi) % (2 * np.pi) - np.pi
 
             linearv = self.linearPID.control(linear_error, self.dt)
@@ -65,6 +74,7 @@ class Simulations():
 
             self.x.append(self.robot.x)
             self.y.append(self.robot.y)
+
             self.step += 1
 
 
@@ -110,10 +120,10 @@ def main():
     ytarget = 10
     dt = 0.1
 
-    robot = Robot()
-    linearcont = Controller(0.8, 0.1, 0.0)
-    angularcont = Controller(0.8, 0.1, 0.0)
-    sim = Simulations(dt, xtarget, ytarget, linearcont, angularcont, robot)
+    robot1 = Robot()
+    linearcont1 = Controller(0.8, 0.1, 0.0)
+    angularcont1 = Controller(0.8, 0.1, 0.0)
+    sim = Simulations(dt, xtarget, ytarget, linearcont1, angularcont1, robot1, noise=0.6)
     sim.run()
 
     animator = Animator(sim)
