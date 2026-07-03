@@ -24,23 +24,39 @@ class Controller():
         self.kp = kp
         self.kd = kd
         self.ki = ki
-        self.I = 0
-        self.lasterror = 0
+        self.integral_error = 0
+        self.last_error = 0
 
     def control(self, error, dt):
-        self.I += error*dt
-        output = (error * self.kp) + ((error-self.lasterror)/dt * self.kd) + (self.I * self.ki)
-        self.lasterror = error
+        self.integral_error += error*dt
+        output = (error * self.kp) + ((error-self.last_error)/dt * self.kd) + (self.integral_error * self.ki)
+        self.last_error = error
         return output
 
 
+class Estimator():
+    def __init__(self, kx, ky):
+        self.last_x = 0
+        self.last_y = 0
+        self.kx = kx
+        self.ky = ky
+
+    def smooth(self, x, y):
+        new_x = x*self.kx + self.last_x*(1-self.kx)
+        new_y = y*self.ky + self.last_y*(1-self.ky)
+        self.last_x = new_x
+        self.last_y = new_y
+        return new_x, new_y
+
+
 class Simulations():
-    def __init__(self, dt, xtarget, ytarget, linearPID, angularPID, robot, noise):
+    def __init__(self, dt, x_target, y_target, linear_PID, angular_PID, robot, noise, estimator=None):
         self.dt = dt
-        self.xtarget = xtarget
-        self.ytarget = ytarget
-        self.linearPID = linearPID
-        self.angularPID = angularPID
+        self.x_target = x_target
+        self.y_target = y_target
+        self.linear_PID = linear_PID
+        self.angular_PID = angular_PID
+        self.estimator = estimator
         self.robot = robot
         self.x = []
         self.y = []
@@ -55,22 +71,34 @@ class Simulations():
             if self.step >= self.max_steps:
                 break
 
-            noisyx = self.robot.x + random.normal(0, self.noise)
-            noisyy = self.robot.y + random.normal(0, self.noise)
+            noisy_x = self.robot.x + random.normal(0, self.noise)
+            noisy_y = self.robot.y + random.normal(0, self.noise)
 
-            linear_error = np.sqrt((self.xtarget - noisyx)**2 + (self.ytarget - noisyy)**2)
+            if self.estimator is None:
+                estimated_x = noisy_x
+                estimated_y = noisy_y
+            else:
+                estimated_x, estimated_y = self.estimator.smooth(noisy_x, noisy_y)
+
+            linear_error = np.sqrt((self.x_target - estimated_x)**2 + (self.y_target - estimated_y)**2)
+
             if linear_error < self.threshold:
+                linearv = 0
+                angularv = 0
+                self.robot.update(linearv, angularv, self.dt)
                 break
-            angular_error = np.arctan2((self.ytarget - noisyy), (self.xtarget - noisyx)) - self.robot.theta
-            angular_error = (angular_error + np.pi) % (2 * np.pi) - np.pi
 
-            linearv = self.linearPID.control(linear_error, self.dt)
-            linearv = np.clip(linearv*np.cos(angular_error), 0, 1)
+            else:
+                angular_error = np.arctan2((self.y_target - estimated_y), (self.x_target - estimated_x)) - self.robot.theta
+                angular_error = (angular_error + np.pi) % (2 * np.pi) - np.pi
 
-            angularv = self.angularPID.control(angular_error, self.dt)
-            angularv = np.clip(angularv, -1, 1)
+                linear_v = self.linear_PID.control(linear_error, self.dt)
+                linear_v = np.clip(linear_v*np.cos(angular_error), 0, 1)
 
-            self.robot.update(linearv, angularv, self.dt)
+                angular_v = self.angular_PID.control(angular_error, self.dt)
+                angular_v = np.clip(angular_v, -1, 1)
+
+                self.robot.update(linear_v, angular_v, self.dt)
 
             self.x.append(self.robot.x)
             self.y.append(self.robot.y)
@@ -85,23 +113,23 @@ class Animator():
         self.time = np.arange(len(sim.x)) * sim.dt
 
     def animate(self):
-        self.ax_xy.set_xlim(-1, self.sim.xtarget + 2)
-        self.ax_xy.set_ylim(-1, self.sim.ytarget + 2)
+        self.ax_xy.set_xlim(-1, self.sim.x_target + 2)
+        self.ax_xy.set_ylim(-1, self.sim.y_target + 2)
         self.ax_xy.set_title("XY Path")
-        self.ax_xy.plot(self.sim.xtarget, self.sim.ytarget, 'r*', markersize=12, label="Target")
+        self.ax_xy.plot(self.sim.x_target, self.sim.y_target, 'r*', markersize=12, label="Target")
         path_line, = self.ax_xy.plot([], [], 'b-', lw=2)
         robot_dot, = self.ax_xy.plot([], [], 'bo', markersize=8)
 
         self.ax_x.set_xlim(0, len(self.time))
         self.ax_x.set_ylim(min(self.sim.x) - 1, max(self.sim.x) + 1)
         self.ax_x.set_title("X over Time")
-        self.ax_x.axhline(self.sim.xtarget, color='r', linestyle='--', label="Target")
+        self.ax_x.axhline(self.sim.x_target, color='r', linestyle='--', label="Target")
         x_line, = self.ax_x.plot([], [], 'b-')
 
         self.ax_y.set_xlim(0, len(self.time))
         self.ax_y.set_ylim(min(self.sim.y) - 1, max(self.sim.y) + 1)
         self.ax_y.set_title("Y over Time")
-        self.ax_y.axhline(self.sim.ytarget, color='r', linestyle='--', label="Target")
+        self.ax_y.axhline(self.sim.y_target, color='r', linestyle='--', label="Target")
         y_line, = self.ax_y.plot([], [], 'g-')
 
         def update(i):
@@ -116,18 +144,19 @@ class Animator():
 
 
 def main():
-    xtarget = 10
-    ytarget = 10
+    x_target = 8
+    y_target = 12
     dt = 0.1
 
-    robot1 = Robot()
-    linearcont1 = Controller(0.8, 0.1, 0.0)
-    angularcont1 = Controller(0.8, 0.1, 0.0)
-    sim = Simulations(dt, xtarget, ytarget, linearcont1, angularcont1, robot1, noise=0.6)
+    robot = Robot()
+    linear_cont = Controller(0.8, 0.1, 0)
+    angular_cont = Controller(0.8, 0.1, 0)
+    estimator = Estimator(0.3, 0.3)
+    sim = Simulations(dt, x_target, y_target, linear_cont, angular_cont, robot, noise=0.5, estimator=estimator)
     sim.run()
 
-    animator = Animator(sim)
-    ani = animator.animate()
+    ani = Animator(sim)
+    ani = ani.animate()
     plt.show()
 
 
