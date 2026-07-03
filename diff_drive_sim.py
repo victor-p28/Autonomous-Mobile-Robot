@@ -41,10 +41,14 @@ class Simulations():
         self.x = []
         self.y = []
         self.threshold = 0.1
+        self.step = 0
+        self.max_steps = 1000
 
     def run(self):
 
         while True:
+            if self.step >= self.max_steps:
+                break
             linear_error = np.sqrt((self.xtarget - self.robot.x)**2 + (self.ytarget - self.robot.y)**2)
             if linear_error < self.threshold:
                 break
@@ -61,6 +65,44 @@ class Simulations():
 
             self.x.append(self.robot.x)
             self.y.append(self.robot.y)
+            self.step += 1
+
+
+class Animator():
+    def __init__(self, sim):
+        self.sim = sim
+        self.fig, (self.ax_xy, self.ax_x, self.ax_y) = plt.subplots(1, 3, figsize=(14, 4))
+        self.time = np.arange(len(sim.x)) * sim.dt
+
+    def animate(self):
+        self.ax_xy.set_xlim(-1, self.sim.xtarget + 2)
+        self.ax_xy.set_ylim(-1, self.sim.ytarget + 2)
+        self.ax_xy.set_title("XY Path")
+        self.ax_xy.plot(self.sim.xtarget, self.sim.ytarget, 'r*', markersize=12, label="Target")
+        path_line, = self.ax_xy.plot([], [], 'b-', lw=2)
+        robot_dot, = self.ax_xy.plot([], [], 'bo', markersize=8)
+
+        self.ax_x.set_xlim(0, len(self.time))
+        self.ax_x.set_ylim(min(self.sim.x) - 1, max(self.sim.x) + 1)
+        self.ax_x.set_title("X over Time")
+        self.ax_x.axhline(self.sim.xtarget, color='r', linestyle='--', label="Target")
+        x_line, = self.ax_x.plot([], [], 'b-')
+
+        self.ax_y.set_xlim(0, len(self.time))
+        self.ax_y.set_ylim(min(self.sim.y) - 1, max(self.sim.y) + 1)
+        self.ax_y.set_title("Y over Time")
+        self.ax_y.axhline(self.sim.ytarget, color='r', linestyle='--', label="Target")
+        y_line, = self.ax_y.plot([], [], 'g-')
+
+        def update(i):
+            path_line.set_data(self.sim.x[:i], self.sim.y[:i])
+            robot_dot.set_data([self.sim.x[i]], [self.sim.y[i]])
+            x_line.set_data(self.time[:i], self.sim.x[:i])
+            y_line.set_data(self.time[:i], self.sim.y[:i])
+            return path_line, robot_dot, x_line, y_line
+
+        plt.tight_layout()
+        return animation.FuncAnimation(self.fig, update, frames=len(self.time), interval=20, blit=True, repeat=False)
 
 
 def main():
@@ -73,38 +115,9 @@ def main():
     angularcont = Controller(0.8, 0.1, 0.0)
     sim = Simulations(dt, xtarget, ytarget, linearcont, angularcont, robot)
     sim.run()
-    time = np.arange(0, len(sim.x)*dt, dt)
 
-    fig, (ax_xy, ax_x, ax_y) = plt.subplots(1, 3, figsize=(14, 4))
-
-    ax_xy.set_xlim(-1, xtarget + 2)
-    ax_xy.set_ylim(-1, ytarget + 2)
-    ax_xy.set_title("XY Path")
-    ax_xy.plot(xtarget, ytarget, 'r*', markersize=12, label="Target")
-    path_line, = ax_xy.plot([], [], 'b-', lw=1)
-    robot_dot, = ax_xy.plot([], [], 'bo', markersize=8)
-
-    ax_x.set_xlim(0, len(time))
-    ax_x.set_ylim(min(sim.x) - 1, max(sim.x) + 1)
-    ax_x.set_title("X over Time")
-    ax_x.axhline(xtarget, color='r', linestyle='--', label="Target")
-    x_line, = ax_x.plot([], [], 'b-')
-
-    ax_y.set_xlim(0, len(time))
-    ax_y.set_ylim(min(sim.y) - 1, max(sim.y) + 1)
-    ax_y.set_title("Y over Time")
-    ax_y.axhline(ytarget, color='r', linestyle='--', label="Target")
-    y_line, = ax_y.plot([], [], 'g-')
-
-    def update(i):
-        path_line.set_data(sim.x[:i], sim.y[:i])
-        robot_dot.set_data([sim.x[i]], [sim.y[i]])
-        x_line.set_data(time[:i], sim.x[:i])
-        y_line.set_data(time[:i], sim.y[:i])
-        return path_line, robot_dot, x_line, y_line
-
-    ani = animation.FuncAnimation(fig, update, frames=len(time), interval=20, blit=True)
-    plt.tight_layout()
+    animator = Animator(sim)
+    ani = animator.animate()
     plt.show()
 
 
