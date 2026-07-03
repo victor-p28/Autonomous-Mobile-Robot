@@ -3,80 +3,109 @@ import matplotlib.animation as animation
 import numpy as np
 
 
+class Robot():
+    def __init__(self):
+        self.x = 0
+        self.y = 0
+        self.theta = 0
+
+    def update(self, v, omega, dt):
+        self.theta += omega*dt
+        self.x += v*np.cos(self.theta)*dt
+        self.y += v*np.sin(self.theta)*dt
+
+
 class Controller():
     def __init__(self, kp, kd, ki):
         self.kp = kp
         self.kd = kd
         self.ki = ki
         self.I = 0
+        self.lasterror = 0
 
-    def control(self, v, error):
-        force = (error * self.kp) - (v * self.kd) + (self.I * self.ki) - 5
-        return force
-
-
-class PointMass():
-    def __init__(self, mass):
-        self.mass = mass
-        self.position = 0
-        self.velocity = 0
-
-    def massUpdate(self, force, dt):
-        self.position += self.velocity * dt
-        acceleration = force / self.mass
-        self.velocity += acceleration * dt
+    def control(self, error, dt):
+        self.I += error*dt
+        output = (error * self.kp) + ((error-self.lasterror)/dt * self.kd) + (self.I * self.ki)
+        self.lasterror = error
+        return output
 
 
-class Simulation():
-    def __init__(self, iterations, dt, setpoint, pid, mass):
-        self.iterations = iterations
+class Simulations():
+    def __init__(self, dt, xtarget, ytarget, linearPID, angularPID, robot):
         self.dt = dt
-        self.setpoint = setpoint
-        self.timesteps = int(iterations / dt)
-        self.x = np.zeros(self.timesteps)
-        self.time = np.arange(0, iterations, dt)
-        self.pid = pid
-        self.mass = mass
+        self.xtarget = xtarget
+        self.ytarget = ytarget
+        self.linearPID = linearPID
+        self.angularPID = angularPID
+        self.robot = robot
+        self.x = []
+        self.y = []
+        self.threshold = 0.1
 
     def run(self):
-        for i in range(self.timesteps-1):
-            error = self.setpoint - self.mass.position
-            force = self.pid.control(self.mass.velocity, error)
-            force = np.clip(force, -10, 10)
-            self.pid.I += error * self.dt if abs(force) < 10 else 0
-            self.mass.massUpdate(force, self.dt)
-            self.x[i+1] = self.mass.position
+
+        while True:
+            linear_error = np.sqrt((self.xtarget - self.robot.x)**2 + (self.ytarget - self.robot.y)**2)
+            if linear_error < self.threshold:
+                break
+            angular_error = np.arctan2((self.ytarget - self.robot.y), (self.xtarget - self.robot.x)) - self.robot.theta
+            angular_error = (angular_error + np.pi) % (2 * np.pi) - np.pi
+
+            linearv = self.linearPID.control(linear_error, self.dt)
+            linearv = np.clip(linearv*np.cos(angular_error), 0, 1)
+
+            angularv = self.angularPID.control(angular_error, self.dt)
+            angularv = np.clip(angularv, -1, 1)
+
+            self.robot.update(linearv, angularv, self.dt)
+
+            self.x.append(self.robot.x)
+            self.y.append(self.robot.y)
 
 
 def main():
-    iterations = 500
+    xtarget = 10
+    ytarget = 10
     dt = 0.1
 
-    setpoint = 100
-    kp = 0.5
-    kd = 0.5
-    ki = 0.1
-    m = 1
-
-    pid = Controller(kp, kd, ki)
-    mass = PointMass(m)
-    sim = Simulation(iterations, dt, setpoint, pid, mass)
+    robot = Robot()
+    linearcont = Controller(0.8, 0.1, 0.0)
+    angularcont = Controller(0.8, 0.1, 0.0)
+    sim = Simulations(dt, xtarget, ytarget, linearcont, angularcont, robot)
     sim.run()
+    time = np.arange(0, len(sim.x)*dt, dt)
 
-    fig, ax = plt.subplots()
-    line, = ax.plot([], [])
-    ax.set_xlim(sim.time[0], sim.time[-1])
-    ax.set_ylim(min(sim.x) - 10, max(sim.x) + 10)
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Position')
+    fig, (ax_xy, ax_x, ax_y) = plt.subplots(1, 3, figsize=(14, 4))
 
-    def update(frame):
-        line.set_data(sim.time[:frame], sim.x[:frame])
-        return line,
+    ax_xy.set_xlim(-1, xtarget + 2)
+    ax_xy.set_ylim(-1, ytarget + 2)
+    ax_xy.set_title("XY Path")
+    ax_xy.plot(xtarget, ytarget, 'r*', markersize=12, label="Target")
+    path_line, = ax_xy.plot([], [], 'b-', lw=1)
+    robot_dot, = ax_xy.plot([], [], 'bo', markersize=8)
 
-    ani = animation.FuncAnimation(fig, update, frames=len(sim.time), interval=1, blit=True)
+    ax_x.set_xlim(0, len(time))
+    ax_x.set_ylim(min(sim.x) - 1, max(sim.x) + 1)
+    ax_x.set_title("X over Time")
+    ax_x.axhline(xtarget, color='r', linestyle='--', label="Target")
+    x_line, = ax_x.plot([], [], 'b-')
+
+    ax_y.set_xlim(0, len(time))
+    ax_y.set_ylim(min(sim.y) - 1, max(sim.y) + 1)
+    ax_y.set_title("Y over Time")
+    ax_y.axhline(ytarget, color='r', linestyle='--', label="Target")
+    y_line, = ax_y.plot([], [], 'g-')
+
+    def update(i):
+        path_line.set_data(sim.x[:i], sim.y[:i])
+        robot_dot.set_data([sim.x[i]], [sim.y[i]])
+        x_line.set_data(time[:i], sim.x[:i])
+        y_line.set_data(time[:i], sim.y[:i])
+        return path_line, robot_dot, x_line, y_line
+
+    ani = animation.FuncAnimation(fig, update, frames=len(time), interval=20, blit=True)
+    plt.tight_layout()
     plt.show()
-    print(sim.x[-1])
 
 
 if __name__ == "__main__":
