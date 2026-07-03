@@ -14,6 +14,8 @@ class Robot():
         self.theta = 0
 
     def update(self, v, omega, dt):
+        v += np.random.normal(0, 0.1)
+        omega += np.random.normal(0, 0.1)
         self.theta += omega*dt
         self.x += v*np.cos(self.theta)*dt
         self.y += v*np.sin(self.theta)*dt
