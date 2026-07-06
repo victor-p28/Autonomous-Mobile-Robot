@@ -3,10 +3,9 @@ import matplotlib.animation as animation
 import numpy as np
 import numpy.random as random
 
-random_seed = 42
-np.random.seed(random_seed)
-
-
+def RMS(true_x, true_y, est_x, est_y):
+    return np.sqrt(np.mean((true_x - est_x)**2 + (true_y - est_y)**2))
+    
 class Robot():
     def __init__(self):
         self.x = 0
@@ -90,6 +89,10 @@ class Simulations():
         self.robot = robot
         self.x = []
         self.y = []
+        self.noisy_x = []
+        self.noisy_y = []
+        self.estimated_x = []
+        self.estimated_y = []
         self.threshold = 0.1
         self.step = 0
         self.max_steps = 1000
@@ -128,6 +131,12 @@ class Simulations():
                 linearv = 0
                 angularv = 0
                 self.robot.update(linearv, angularv, self.dt)
+                self.x.append(self.robot.x)
+                self.y.append(self.robot.y)
+                self.noisy_x.append(noisy_x)
+                self.noisy_y.append(noisy_y)
+                self.estimated_x.append(estimated_x)
+                self.estimated_y.append(estimated_y)
                 break
 
             else:
@@ -146,6 +155,10 @@ class Simulations():
 
             self.x.append(self.robot.x)
             self.y.append(self.robot.y)
+            self.noisy_x.append(noisy_x)
+            self.noisy_y.append(noisy_y)
+            self.estimated_x.append(estimated_x)
+            self.estimated_y.append(estimated_y)
 
             self.step += 1
 
@@ -188,20 +201,58 @@ class Animator():
 
 
 def main():
-    x_target = 8
-    y_target = 12
-    dt = 0.1
 
-    robot = Robot()
-    linear_cont = Controller(0.8, 0.1, 0)
-    angular_cont = Controller(0.8, 0.1, 0)
-    ekf = EKF()
-    sim = Simulations(dt, x_target, y_target, linear_cont, angular_cont, robot, noise=0.5, EKF=ekf)
-    sim.run()
+    rms = []
+    rms_estimator = []
+    rms_ekf = []    
+    for i in range(100):
+        x_target = 8
+        y_target = 12
+        dt = 0.1
 
-    ani = Animator(sim)
-    ani = ani.animate()
-    plt.show()
+        robot = Robot()
+        linear_cont1 = Controller(0.8, 0.1, 0)
+        angular_cont1 = Controller(0.8, 0.1, 0)
+        sim = Simulations(dt, x_target, y_target, linear_cont1, angular_cont1, robot, noise=0.5)
+        sim.run()
+        rms.append(RMS(np.array(sim.x), np.array(sim.y), np.array(sim.noisy_x), np.array(sim.noisy_y)))
+
+        robot_estimator = Robot()
+        linear_cont2 = Controller(0.8, 0.1, 0)
+        angular_cont2 = Controller(0.8, 0.1, 0)
+        estimator = Estimator(0.5, 0.5)
+        sim_estimator = Simulations(dt, x_target, y_target, linear_cont2, angular_cont2, robot_estimator, noise=0.5, estimator=estimator)
+        sim_estimator.run()
+        rms_estimator.append(RMS(np.array(sim_estimator.x), np.array(sim_estimator.y), np.array(sim_estimator.estimated_x), np.array(sim_estimator.estimated_y)))
+
+        robot_ekf = Robot()
+        linear_cont3 = Controller(0.8, 0.1, 0)
+        angular_cont3 = Controller(0.8, 0.1, 0)
+        ekf = EKF()
+        sim_ekf = Simulations(dt, x_target, y_target, linear_cont3, angular_cont3, robot_ekf, noise=0.5, EKF=ekf)
+        sim_ekf.run()
+        rms_ekf.append(RMS(np.array(sim_ekf.x), np.array(sim_ekf.y), np.array(sim_ekf.estimated_x), np.array(sim_ekf.estimated_y)))
+    
+    print(f"RMS: {np.mean(rms):.3f} +/- {np.std(rms):.3f}")
+    print(f"Estimator RMS: {np.mean(rms_estimator):.3f} +/- {np.std(rms_estimator):.3f}")
+    print(f"EKF RMS: {np.mean(rms_ekf):.3f} +/- {np.std(rms_ekf):.3f}")
+
+    # ani = Animator(sim)
+    # ani = ani.animate()
+    # plt.show()
+
+    # make a plot of the true, noisy, and estimated paths
+    # plt.figure(figsize=(8, 6))
+    # plt.plot(sim.x, sim.y, label='True Path', color='blue')
+    # plt.plot(sim.noisy_x, sim.noisy_y, label='Noisy Path', color='orange', alpha=0.5)
+    # plt.plot(sim.estimated_x, sim.estimated_y, label='Estimated Path', color='green')
+    # plt.scatter(x_target, y_target, color='red', label='Target', marker='*', s=200)
+    # plt.title('Robot Path Simulation')
+    # plt.xlabel('X Position')
+    # plt.ylabel('Y Position')
+    # plt.legend()
+    # plt.grid(True)
+    # plt.show()
 
 
 if __name__ == "__main__":
