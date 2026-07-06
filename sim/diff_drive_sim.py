@@ -50,15 +50,43 @@ class Estimator():
         self.last_y = new_y
         return new_x, new_y
 
+class EKF():
+    def __init__(self):
+        self.x = np.zeros((3, 1))  # State vector [x, y, theta]
+        self.P = np.eye(3) * 0.1
+        self.Q = np.eye(3) * 0.01
+        self.R = np.eye(2) * 0.2
+        self.H = np.array([[1, 0, 0],
+                  [0, 1, 0]])
+
+
+    def predict(self, v, omega, dt):
+        self.F = np.array([[1, 0, -v*np.sin(self.x[2, 0])*dt],
+                  [0, 1, v*np.cos(self.x[2, 0])*dt],
+                  [0, 0, 1]])
+        self.x[0, 0] += v * np.cos(self.x[2, 0]) * dt
+        self.x[1, 0] += v * np.sin(self.x[2, 0]) * dt
+        self.x[2, 0] += omega * dt
+        self.P = self.F @ self.P @ self.F.T + self.Q
+    
+    def update(self, z):
+        y = z - self.H @ self.x
+        S = self.H @ self.P @ self.H.T + self.R
+        K = self.P @ self.H.T @ np.linalg.inv(S)
+        self.x = self.x + K @ y
+        self.P = (np.eye(3) - K @ self.H) @ self.P
+
+
 
 class Simulations():
-    def __init__(self, dt, x_target, y_target, linear_PID, angular_PID, robot, noise, estimator=None):
+    def __init__(self, dt, x_target, y_target, linear_PID, angular_PID, robot, noise, estimator=None, EKF=None):
         self.dt = dt
         self.x_target = x_target
         self.y_target = y_target
         self.linear_PID = linear_PID
         self.angular_PID = angular_PID
         self.estimator = estimator
+        self.EKF = EKF
         self.robot = robot
         self.x = []
         self.y = []
@@ -66,6 +94,8 @@ class Simulations():
         self.step = 0
         self.max_steps = 1000
         self.noise = noise
+        self.last_v = 0
+        self.last_omega = 0
 
     def run(self):
 
@@ -76,11 +106,21 @@ class Simulations():
             noisy_x = self.robot.x + random.normal(0, self.noise)
             noisy_y = self.robot.y + random.normal(0, self.noise)
 
-            if self.estimator is None:
+            if self.estimator is None and self.EKF is None:
                 estimated_x = noisy_x
                 estimated_y = noisy_y
-            else:
+                estimated_theta = self.robot.theta
+
+            elif self.estimator is not None:
                 estimated_x, estimated_y = self.estimator.smooth(noisy_x, noisy_y)
+                estimated_theta = self.robot.theta
+            
+            elif self.EKF is not None:
+                self.EKF.predict(self.last_v, self.last_omega, self.dt)
+                self.EKF.update(np.array([[noisy_x], [noisy_y]]))
+                estimated_x = self.EKF.x[0, 0]
+                estimated_y = self.EKF.x[1, 0]
+                estimated_theta = self.EKF.x[2, 0]
 
             linear_error = np.sqrt((self.x_target - estimated_x)**2 + (self.y_target - estimated_y)**2)
 
@@ -91,7 +131,7 @@ class Simulations():
                 break
 
             else:
-                angular_error = np.arctan2((self.y_target - estimated_y), (self.x_target - estimated_x)) - self.robot.theta
+                angular_error = np.arctan2((self.y_target - estimated_y), (self.x_target - estimated_x)) - estimated_theta
                 angular_error = (angular_error + np.pi) % (2 * np.pi) - np.pi
 
                 linear_v = self.linear_PID.control(linear_error, self.dt)
@@ -101,6 +141,8 @@ class Simulations():
                 angular_v = np.clip(angular_v, -1, 1)
 
                 self.robot.update(linear_v, angular_v, self.dt)
+                self.last_v = linear_v
+                self.last_omega = angular_v
 
             self.x.append(self.robot.x)
             self.y.append(self.robot.y)
@@ -153,8 +195,8 @@ def main():
     robot = Robot()
     linear_cont = Controller(0.8, 0.1, 0)
     angular_cont = Controller(0.8, 0.1, 0)
-    estimator = Estimator(0.3, 0.3)
-    sim = Simulations(dt, x_target, y_target, linear_cont, angular_cont, robot, noise=0.5, estimator=estimator)
+    ekf = EKF()
+    sim = Simulations(dt, x_target, y_target, linear_cont, angular_cont, robot, noise=0.5, EKF=ekf)
     sim.run()
 
     ani = Animator(sim)
